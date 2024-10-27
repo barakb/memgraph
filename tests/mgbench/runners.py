@@ -110,6 +110,10 @@ class BoltClient(BaseClient):
             benchmark_context.vendor_args["bolt-port"] if "bolt-port" in benchmark_context.vendor_args.keys() else 7687
         )
         self._vendor_name = benchmark_context.vendor_name
+        if self._vendor_name == "falkordb":
+            self._client_binary = self._client_binary + "_new"
+        else:
+            self._client_binary = self._client_binary + "_old"
 
     def _get_args(self, **kwargs):
         return _convert_args_to_flags(self._client_binary, **kwargs)
@@ -151,7 +155,11 @@ class BoltClient(BaseClient):
                 if self._vendor_name == "falkordb":
                     falkor_check_db_args = ["redis-cli", "-h", "127.0.01", "-p", "6379", "ping"]
                     print(f"---> running subprocess to check if the db up and running: {falkor_check_db_args}")
-                    subprocess.run(falkor_check_db_args, capture_output=True, text=True, check=True)
+                    result = subprocess.run(falkor_check_db_args, capture_output=True, text=True, check=True)
+                    print(f"---> result is {result.stdout}")
+                    if result.stdout.strip() != "PONG":
+                        time.sleep(3)
+                        continue
                 else:
                     print(f"---> running subprocess to check if the db up and running: {check_db_args}")
                     subprocess.run(check_db_args, capture_output=True, text=True, check=True)
@@ -189,11 +197,18 @@ class BoltClient(BaseClient):
 
         ret = None
         try:
-            print(f"---> running subprocess({args})")
+            #            if self._vendor_name == "falkordb":
+            #                falkor_args = ["redis-server", "--dir", "./redis", "--loadmodule", "./falkordb.so", "BOLT_PORT", "7687"]
+            #                print(f"---> bolt client: running subprocess({falkor_args})")
+            #                ret = subprocess.run(falkor_args, capture_output=True)
+            #            else:
+            print(f"---> bolt client: running subprocess({args})")
             ret = subprocess.run(args, capture_output=True)
         finally:
             error = ret.stderr.decode("utf-8").strip().split("\n")
             data = ret.stdout.decode("utf-8").strip().split("\n")
+            print(f"---> bolt client return error: {error}")
+            print(f"---> bolt client return data: {data}")
             if error and error[0] != "":
                 log.warning("Reported errors from client:")
                 log.warning("There is a possibility that query from: {} is not executed properly".format(file_path))
@@ -461,23 +476,34 @@ class Memgraph(BaseRunner):
         args = self._set_args(**kwargs)
         print(f"---> starting database {args}")
         self._proc_mg = subprocess.Popen(args, stdout=subprocess.DEVNULL)
-        time.sleep(0.2)
+        # self._proc_mg = subprocess.Popen(args, capture_output=True, text=True)
+        # print("--> after")
+        # print('---> stdout:', self._proc_mg.stdout)
+        # print('---> stderr:', self._proc_mg.stderr)
+
+        time.sleep(0.5)
         if self._proc_mg.poll() is not None:
             self._proc_mg = None
             raise Exception("The database process died prematurely!")
+        #        port = 6379 if self._vendor_name == "falkordb" else self._bolt_port
+        print(f"--> waiting for port {self._bolt_port}")
         _wait_for_server_socket(self._bolt_port)
         ret = self._proc_mg.poll()
+        print(f"--> starting database poll is {ret}")
 
     def _cleanup(self):
+        print("---> cleanup()")
         if self._proc_mg is None:
             return 0
         usage = _get_usage(self._proc_mg.pid)
+        print("---> terninateing database")
         self._proc_mg.terminate()
         ret = self._proc_mg.wait()
         self._proc_mg = None
         return ret, usage
 
     def start_db_init(self, workload):
+        print("---> start_db_init")
         if self._performance_tracking:
             p = threading.Thread(target=self.res_background_tracking, args=(self._rss, self._stop_event))
             self._stop_event.clear()
@@ -486,11 +512,13 @@ class Memgraph(BaseRunner):
         self._start(storage_snapshot_on_exit=True, **self._vendor_args)
 
     def stop_db_init(self, workload):
+        print("---> stop_db_init")
+
         if self._performance_tracking:
             self._stop_event.set()
             self.dump_rss(workload)
-        ret, usage = self._cleanup()
-        return usage
+            ret, usage = self._cleanup()
+            return usage
 
     def start_db(self, workload):
         if self._performance_tracking:
@@ -1113,7 +1141,7 @@ class Falkordb(BaseRunner):
         self._directory = tempfile.TemporaryDirectory(dir=benchmark_context.temporary_directory)
         self._vendor_args = benchmark_context.vendor_args
         self._bolt_port = self._vendor_args["bolt-port"] if "bolt-port" in self._vendor_args.keys() else 7687
-        self._proc_mg = None
+        self._proc_falkordb = None
         self._stop_event = threading.Event()
         self._rss = []
 
@@ -1141,32 +1169,51 @@ class Falkordb(BaseRunner):
 
     def _start(self, **kwargs):
         print(f"---> _start({kwargs})")
-        if self._proc_mg is not None:
+        if self._proc_falkordb is not None:
             raise Exception("The database process is already running!")
         args = self._set_args(**kwargs)
-        print(f"---> starting database {args}")
-        self._proc_mg = subprocess.Popen(args, stdout=subprocess.DEVNULL)
-        time.sleep(0.2)
-        if self._proc_mg.poll() is not None:
-            self._proc_mg = None
+
+        falkor_args = [
+            "redis-server",
+            "--dir",
+            os.path.abspath("./redis"),
+            "--logfile",
+            os.path.abspath("./redis-server.log"),
+            "--loadmodule",
+            os.path.abspath("./falkordb.so"),
+            "BOLT_PORT",
+            "7687",
+        ]
+
+        print(f"---> starting database {falkor_args}")
+        env = os.environ.copy()
+        env["BOLT_VERSION"] = "BOLT_V44"
+        self._proc_falkordb = subprocess.Popen(falkor_args, stdout=subprocess.DEVNULL, env=env)
+
+        time.sleep(1)
+        if self._proc_falkordb.poll() is not None:
+            self._proc_falkordb = None
+            print(f"---> fail to start falkordb, the process died prematurely")
             raise Exception("The database process died prematurely!")
+        print(f"---> waiting for server socket on port 6379")
         _wait_for_server_socket(6379)
-        ret = self._proc_mg.poll()
+        print(f"---> done waiting for server socket on port 6379")
+        ret = self._proc_falkordb.poll()
+        print(f"--> poll for proc_mg is {ret}")
+        self._wait_for_ok()
 
     def _cleanup(self):
         print(f"---> _cleanup() falkordb")
-        if self._proc_mg is None:
+        if self._proc_falkordb is None:
+            print(f"---> falkordb handle is None skip running skip cleanup")
             return 0
 
-        # use redis-cli to save the data
-        save_args = ["redis-cli", "SAVE"]
-        result = subprocess.run(save_args, capture_output=True, text=True)
-        print(f"executing {save_args} returns {result.stdout}")
-
-        usage = _get_usage(self._proc_mg.pid)
-        self._proc_mg.terminate()
-        ret = self._proc_mg.wait()
-        self._proc_mg = None
+        print(f"---> before _get_usage")
+        usage = _get_usage(self._proc_falkordb.pid)
+        print(f"---> terminating falkordb (pid=${self._proc_falkordb.pid}) usage=${usage}")
+        self._proc_falkordb.terminate()
+        ret = self._proc_falkordb.wait()
+        self._proc_falkordb = None
         return ret, usage
 
     def start_db_init(self, workload):
@@ -1176,10 +1223,16 @@ class Falkordb(BaseRunner):
             self._stop_event.clear()
             self._rss.clear()
             p.start()
+        self._delete_redis_dump()
         self._start(storage_snapshot_on_exit=True, **self._vendor_args)
 
     def stop_db_init(self, workload):
         print(f"---> stop_db_init({workload})")
+        # use redis-cli to save the data
+        save_args = ["redis-cli", "SAVE"]
+        result = subprocess.run(save_args, capture_output=True, text=True)
+        print(f"---> executing {save_args} returns {result.stdout}")
+        self._wait_for_ok()
         if self._performance_tracking:
             self._stop_event.set()
             self.dump_rss(workload)
@@ -1189,30 +1242,54 @@ class Falkordb(BaseRunner):
 
         return usage
 
+    def _wait_for_ok(self):
+        while True:
+            falkor_check_db_args = ["redis-cli", "-h", "127.0.01", "-p", "6379", "ping"]
+            print(f"---> waiting for OK")
+            result = subprocess.run(falkor_check_db_args, capture_output=True, text=True, check=True)
+            print(f"---> result is {result.stdout}")
+            if result.stdout.strip() != "PONG":
+                time.sleep(3)
+                continue
+            else:
+                break
+
+    def _delete_redis_dump(self):
+        path = os.path.abspath("./redis/dump.rdb")
+        print(f"---> remove redis dump: {path}")
+        os.remove(path)
+
     def backup_redis_dump(self):
-        print("---> backup redis dump")
+        source = os.path.abspath("redis/dump.rdb")
+        target = os.path.abspath("redis/dump.rdb.bk")
+        cmd = f"cp -f {source} {target}"
+        print("---> backup redis dump: {cmd}")
         out = subprocess.run(
-            args="cp -f /home/barak_bar/redisdb/dump.rdb /home/barak_bar/redisdb/dump.rdb.bk",
+            args=cmd,
             cwd=self._directory.name,
             capture_output=True,
             shell=True,
         )
-        print(out.stderr.decode("utf-8"))
-        print(out.stdout.decode("utf-8"))
+
+        print(f"---> out.stdout: {out.stdout}")
 
     def restore_redis_dump(self):
-        print("---> restoring redis dump")
+        source = os.path.abspath("redis/dump.rdb.bk")
+        target = os.path.abspath("redis/dump.rdb")
+        cmd = f"cp -f {source} {target}"
+        print("---> restore redis dump: {cmd}")
         out = subprocess.run(
-            args="cp -f /home/barak_bar/redisdb/dump.rdb.bk /home/barak_bar/redisdb/dump.rdb",
+            args=cmd,
             cwd=self._directory.name,
             capture_output=True,
             shell=True,
         )
-        print(out.stderr.decode("utf-8"))
-        print(out.stdout.decode("utf-8"))
+
+        print(f"---> out.stdout: {out.stdout}")
 
     def start_db(self, workload):
         print(f"---> start_db({workload})")
+        self.restore_redis_dump()
         if self._performance_tracking:
             p = threading.Thread(target=self.res_background_tracking, args=(self._rss, self._stop_event))
             self._stop_event.clear()
@@ -1230,11 +1307,11 @@ class Falkordb(BaseRunner):
 
     def clean_db(self):
         print(f"---> clean_db()")
-        if self._proc_mg is not None:
+        if self._proc_falkordb is not None:
             raise Exception("The database process is already running, cannot clear data it!")
         else:
             out = subprocess.run(
-                args="rm /home/barak_bar/redisdb/dump.rdb",
+                args="rm -f redis/dump.rdb",
                 cwd=self._directory.name,
                 capture_output=True,
                 shell=True,
@@ -1246,8 +1323,8 @@ class Falkordb(BaseRunner):
         print(f"---> res_background_tracking({res}, {stop_event})")
         print("Started rss tracking.")
         while not stop_event.is_set():
-            if self._proc_mg != None:
-                self._rss.append(_get_current_usage(self._proc_mg.pid))
+            if self._proc_falkordb != None:
+                self._rss.append(_get_current_usage(self._proc_falkordb.pid))
             time.sleep(0.05)
         print("Stopped rss tracking. ")
 
