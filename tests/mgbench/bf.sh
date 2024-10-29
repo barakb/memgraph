@@ -8,4 +8,4 @@ cleanup() {
 
 trap cleanup EXIT
 
-python3 graph_bench.py --vendor falkordb ./run-falkordb.sh  --dataset-name demo --dataset-group "*" --dataset-size "*"
+python3 graph_bench.py --vendor falkordb ./falkordb.so  --dataset-name demo --dataset-group "*" --dataset-size "*"

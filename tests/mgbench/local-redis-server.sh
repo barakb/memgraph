@@ -1,0 +1,1 @@
+redis-server --dir /home/barak_bar/memgraph/tests/mgbench/redis --loadmodule /home/barak_bar/memgraph/tests/mgbench/falkordb.so BOLT_PORT 7687

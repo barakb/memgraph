@@ -26,6 +26,7 @@
 #include <math.h>
 #include <json/json.hpp>
 
+#include <hiredis/hiredis.h>
 #include <iostream>
 #include "communication/bolt/client.hpp"
 #include "communication/bolt/v1/value.hpp"
@@ -463,6 +464,7 @@ void ExecuteValidation(const std::vector<std::pair<std::string, bolt_map_t>> &qu
 }
 
 int main(int argc, char **argv) {
+  spdlog::set_level(spdlog::level::trace);
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   spdlog::info("Running a bolt client with following settings:");

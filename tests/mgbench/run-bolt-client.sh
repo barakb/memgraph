@@ -1,0 +1,2 @@
+#/home/barak_bar/memgraph/build/tests/mgbench/client_new --input $1 --num-workers 2 --max-retries 10000 --queries-json=true --username  '' --password '' --port 7687 --validation=true --time-dependent-execution 0
+/home/barak_bar/memgraph/build/tests/mgbench/client_new --input $1 --num-workers 2 --max-retries 10000 --queries-json=true --username  '' --password '' --port 7687 --validation=false --time-dependent-execution 0

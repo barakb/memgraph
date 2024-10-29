@@ -114,6 +114,7 @@ class BoltClient(BaseClient):
             self._client_binary = self._client_binary + "_new"
         else:
             self._client_binary = self._client_binary + "_old"
+        print(f"---> creating bolt client with context {benchmark_context}")
 
     def _get_args(self, **kwargs):
         return _convert_args_to_flags(self._client_binary, **kwargs)
@@ -197,6 +198,10 @@ class BoltClient(BaseClient):
 
         ret = None
         try:
+            if self._vendor_name == "falkordb":
+                print(f"---> queries_and_args_json is {file_path}")
+                os.system(f"cp -f {file_path} ./last-query.json")
+
             #            if self._vendor_name == "falkordb":
             #                falkor_args = ["redis-server", "--dir", "./redis", "--loadmodule", "./falkordb.so", "BOLT_PORT", "7687"]
             #                print(f"---> bolt client: running subprocess({falkor_args})")

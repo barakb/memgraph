@@ -18,11 +18,8 @@
 #include "communication/bolt/v1/fmt.hpp"
 #include "io/network/fmt.hpp"
 
-const char *env_variable = "BOTL_5";
 namespace {
-
-constexpr uint8_t kBoltV43Version[4] = {0x00, 0x00, 0x03, 0x04};
-constexpr uint8_t kBoltV44Version[4] = {0x00, 0x00, 0x03, 0x05};
+constexpr uint8_t kBoltV43Version[4] = {0x00, 0x00, 0x03, 0x05};
 constexpr uint8_t kEmptyBoltVersion[4] = {0x00, 0x00, 0x00, 0x00};
 }  // namespace
 namespace memgraph::communication::bolt {
@@ -31,16 +28,6 @@ Client::Client(communication::ClientContext &context) : client_{&context} {}
 
 void Client::Connect(const io::network::Endpoint &endpoint, const std::string &username, const std::string &password,
                      const std::string &client_name) {
-  const char *version_env = getenv("BOLT_VERSION");
-  constexpr size_t kBoltV43VersionSize = sizeof(kBoltV43Version);
-
-  const uint8_t *selected_version;
-  if (std::string(version_env) == "BOLT_V44") {
-    selected_version = kBoltV44Version;
-  } else {
-    selected_version = kBoltV43Version;
-  }
-
   if (!client_.Connect(endpoint)) {
     throw ClientFatalException("Couldn't connect to {}!", endpoint);
   }
@@ -50,28 +37,28 @@ void Client::Connect(const io::network::Endpoint &endpoint, const std::string &u
     throw ServerCommunicationException();
   }
 
-  if (!client_.Write(selected_version, kBoltV43VersionSize, true)) {
+  if (!client_.Write(kBoltV43Version, sizeof(kBoltV43Version), true)) {
     spdlog::error("Couldn't send protocol version!");
     throw ServerCommunicationException();
   }
 
   for (int i = 0; i < 3; ++i) {
-    if (!client_.Write(kEmptyBoltVersion, kBoltV43VersionSize, i != 2)) {
+    if (!client_.Write(kEmptyBoltVersion, sizeof(kEmptyBoltVersion), i != 2)) {
       spdlog::error("Couldn't send protocol version!");
       throw ServerCommunicationException();
     }
   }
 
-  if (!client_.Read(kBoltV43VersionSize)) {
+  if (!client_.Read(sizeof(kBoltV43Version))) {
     spdlog::error("Couldn't get negotiated protocol version!");
     throw ServerCommunicationException();
   }
 
-  if (memcmp(selected_version, client_.GetData(), kBoltV43VersionSize) != 0) {
+  if (memcmp(kBoltV43Version, client_.GetData(), sizeof(kBoltV43Version)) != 0) {
     spdlog::error("Server negotiated unsupported protocol version!");
     throw ClientFatalException("The server negotiated an usupported protocol version!");
   }
-  client_.ShiftData(sizeof(selected_version));
+  client_.ShiftData(sizeof(kBoltV43Version));
 
   if (!encoder_.MessageInit({{"user_agent", client_name},
                              {"scheme", "basic"},
